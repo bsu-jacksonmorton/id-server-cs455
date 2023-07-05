@@ -1,0 +1,773 @@
+package server;
+
+import java.io.*;
+import java.net.*;
+import java.rmi.AlreadyBoundException;
+import java.rmi.NotBoundException;
+import java.rmi.RemoteException;
+import java.rmi.registry.LocateRegistry;
+import java.rmi.registry.Registry;
+import java.rmi.server.RMIClientSocketFactory;
+import java.rmi.server.RMIServerSocketFactory;
+import java.util.*;
+
+
+import org.apache.commons.cli.*;
+import shared.Id;
+import shared.Utility;
+
+import javax.rmi.ssl.SslRMIClientSocketFactory;
+import javax.rmi.ssl.SslRMIServerSocketFactory;
+
+/**
+ * The IdServer class is used as a driver class for the server.
+ *
+ * @author JMORTON
+ * @author JCROWELL
+ * @version 1.0 CS455 Spring 2022
+ */
+public class IdServer implements Id, java.io.Serializable, IdServerMember {
+    // Network Variables
+    private static MulticastSocket socket;
+    private static InetAddress groupAddr;
+
+    // Multicast card interface name
+    private static String cardInput;
+
+    private  ArrayList<String> ipList = new ArrayList<>();
+
+    private  ArrayList<IdServer> servers = new ArrayList<>();
+
+
+    // Server instances variables relevant to ServerObject
+    private InetAddress myIP;
+    private int servePort;
+    private long myPID;
+
+    private HashMap<String, UUID> loginToUUIDMap;
+    private HashMap<UUID, User> userDatabase;
+    private boolean verboseEnabled = false;
+
+    // Coordinator bits
+    private IdServer coord;     // Title-holder of coordinator
+    private Registry registry;
+
+    // Multicast Stuff
+    private static InetAddress hiveCluster;         // IP of the group
+    private static MulticastSocket pipeline;        // Socket
+     // List of servers in group
+    private ArrayList<InetAddress> iplist = new ArrayList<>();      // IPs of servers in group
+    private static final int MASTER_CASTER = 4649;      // Port
+
+    // Friggin' Options. Again.
+    private static final Option ARG_VERB = new Option("v", "verbose", false, "Verbose mode for server yes/no");
+    private static final Option ARG_PORT = new Option("n", "numport", true, "Specify a port; default is 1099");
+    private static final Option ARG_NIC = new Option("c", "netcard", true, "Name of network interface card");
+
+    public IdServer() {
+        loginToUUIDMap = new HashMap<>();
+        userDatabase = new HashMap<>();
+        startTimerForDiskSave();
+    }
+
+    public IdServer(boolean verberoseEnabled) {
+        userDatabase = new HashMap<>();
+        this.verboseEnabled = verberoseEnabled;
+        startTimerForDiskSave();
+    }
+
+    // Just moved this for speed's sake
+    public static void main(String[] args) {
+        // SSL Setup
+        System.setProperty("javax.net.ssl.keyStore", "src/main/resources/Server_Keystore");
+        System.setProperty("javax.net.ssl.keyStorePassword", "test123");
+        System.setProperty("java.security.policy", "mysecurity.policy");
+        System.setProperty("javax.net.ssl.trustStore", "src/main/resources/Client_Truststore");
+        System.setProperty("javax.net.ssl.trustStorePassword", "test123");
+
+        // RMI port specification
+        ARG_PORT.setArgs(1);
+        ARG_PORT.setArgName("portnumber");
+        ARG_PORT.setOptionalArg(true);
+        ARG_PORT.setRequired(false);
+
+        // Network card
+        ARG_NIC.setArgs(1);
+        ARG_NIC.setArgName("cardname");
+        ARG_NIC.setRequired(true);
+
+        // Verbosity
+        boolean verboseFlag = false;
+
+        // Default RMI port
+        int servePort = 1099;
+
+
+        Options options = new Options();
+        options.addOption(ARG_VERB);
+//        options.addOption(ARG_IP);
+        options.addOption(ARG_PORT);
+        options.addOption(ARG_NIC);
+
+        CommandLineParser clp = new BasicParser();
+
+        try {
+            CommandLine cl = clp.parse(options, args);
+
+            // Handle possible verbose flag
+            if (cl.hasOption(ARG_VERB.getOpt())) {
+                verboseFlag = true;
+            }
+
+            // Handle possible port flag
+            if (cl.hasOption(ARG_PORT.getOpt())) {
+                servePort = Integer.parseInt(cl.getOptionValue(ARG_PORT.getOpt()));
+            }
+
+            if (cl.hasOption(ARG_NIC.getOpt())) {
+                cardInput = cl.getOptionValue(ARG_NIC.getOpt());
+            }
+
+
+            //             MULTICAST STUFF //
+            // Establish the IP of the multicast
+            hiveCluster = InetAddress.getByName("230.230.230.230");
+            // Create multisocket
+            pipeline = new MulticastSocket(MASTER_CASTER);
+
+            // Establish NIC, provided by user
+            NetworkInterface card = NetworkInterface.getByName(cardInput);
+            // Uh, initiate group contact?
+            pipeline.setNetworkInterface(card);
+            pipeline.joinGroup(hiveCluster);
+
+            // Get the server from disk or create a new one.
+            final IdServer server = readServerFromDisk(verboseFlag);
+
+            // Establish own IP
+            server.myIP = InetAddress.getLocalHost();
+            server.servePort = servePort;
+//            server.exportToRMI();
+            System.out.println(NetworkInterface.getNetworkInterfaces());
+
+            RMIClientSocketFactory rmiClientSocketFactory = new SslRMIClientSocketFactory();
+            RMIServerSocketFactory rmiServerSocketFactory = new SslRMIServerSocketFactory();
+            server.registry = LocateRegistry.createRegistry(servePort, rmiClientSocketFactory, rmiServerSocketFactory);
+            try {
+                server.registry.bind("IdServer", server);
+            } catch (AlreadyBoundException e) {
+                throw new RuntimeException(e);
+            }
+
+//            try {
+//                registry.bind("IdServer", server);
+//                if (InetAddress.getLocalHost().getHostAddress().equals("172.20.0.12")) {
+//                    IdServer cordy = (IdServer) LocateRegistry.getRegistry("172.20.0.11", servePort, rmiClientSocketFactory).lookup("coord");
+//                    System.out.println("HOLY SHIT IT WORKED\n" + cordy.getServerInfo());
+//                    cordy.createAccount("test", "test", "test", "test", 1);
+//                    System.out.println(cordy.getAllUsers(1));
+//                    System.out.println(server.getAllUsers(3));
+//                } else if (InetAddress.getLocalHost().getHostAddress().equals("172.20.0.11")) {
+//                    IdServer cord = (IdServer) LocateRegistry.getRegistry("172.20.0.10", servePort, rmiClientSocketFactory).lookup("IdServer");
+//                    registry.bind("coord", cord);
+//                }
+//
+//            } catch (AlreadyBoundException e) {
+//                throw new RuntimeException(e);
+//            } catch (NotBoundException e) {
+//                throw new RuntimeException(e);
+//            }
+
+            server.listen(hiveCluster, pipeline, server);
+
+//            server.electionSelection();
+
+//            server.broadcast();
+
+            // Set debug level
+            server.setPrintStatements(verboseFlag);
+            // Assign PID
+            server.setPID(ProcessHandle.current().pid() + new Random().nextInt(100));
+            // Set Timer For Disk Save
+            server.startTimerForDiskSave();
+            // Adds shutdown hook
+            Runtime.getRuntime().addShutdownHook(new Thread() {
+
+                public void run() {
+                    System.out.println("\nShutting down...");
+                    System.out.println("Saving server to disk.");
+                    server.saveServerToDisk();
+                }
+            });
+
+        } catch (ParseException e) {
+            System.out.println("PARSE EXCEPTION");
+
+        } catch (UnknownHostException e) {
+            System.out.println("UNKNOWN HOST EXCEPTION");
+        }
+
+        // Should be last exception due to inheritance?
+        catch (IOException e) {
+            System.out.println("GENERALIZED IO EXCEPTION -_-");
+        }
+
+
+    }
+    private IdServer getIdServerFromInet(InetAddress address){
+        for(IdServer server: servers){
+            if(server.getInet().equals(address)){
+                return server;
+            }
+        }
+        System.out.println("No matches found.");
+        return null;
+    }
+
+    /**
+     * Run an election by sending your PID to everyone; if you don't receive a backdown message, you win
+     */
+    public void electionSelection() {
+
+        ServerObject electMe = new ServerObject(myIP, myPID, "ElectMe");
+        try {
+
+            // Send out own ballot
+            byte[] messageOut = objToByte(electMe);
+            DatagramPacket packetOut = new DatagramPacket(messageOut, messageOut.length, hiveCluster, MASTER_CASTER);
+            pipeline.send(packetOut);
+
+            // Tracker to know when everyone has spoken
+            int ballotsArrived = 0;
+            ArrayList<ServerObject> ballotBox = new ArrayList<>();
+
+            // Collect ballots
+            while (ballotsArrived < servers.size()) {       // Collect until number of ballots = number of servers
+                byte[] messageIn = new byte[1024];
+                DatagramPacket packetIn = new DatagramPacket(messageIn, messageIn.length);
+                pipeline.receive(packetIn);
+
+                // Convert the packet back to a ServerObject, put in ballot box
+                ballotBox.add((ServerObject) byteToObj(messageIn));
+                ballotsArrived++;
+            }
+
+            // Only the biggest PID should be able to set this to true
+            boolean bigBallot = false;
+
+            // Now, we should have everyone's info; for-each will allow us to find the winner
+            for (ServerObject ballot : ballotBox) {
+
+                // If a single PID in the ballot is bigger than yours, you are not the winner
+                if (ballot.getPID() > myPID) {
+                    break;
+                }
+
+                //      Don't need to worry about removing own ballot from box? Should evaluate to =, not >,
+                //      so BREAK doesn't happen and pass over normally
+
+                // If you get here, your PID was bigger than everyone else's
+                bigBallot = true;
+            }
+
+            // Now, either go into listen mode for coronation OR send coronation message
+            if (bigBallot) {
+                ServerObject iWin = new ServerObject(myIP, myPID, "IWin");
+                byte[] iWinBroad = objToByte(iWin);
+                DatagramPacket iWinPack = new DatagramPacket(iWinBroad, iWinBroad.length, hiveCluster, MASTER_CASTER);
+                pipeline.send(iWinPack);
+                this.coord = this;
+            } else {
+                byte[] newCoord = new byte[1024];
+                DatagramPacket newCoordPack = new DatagramPacket(newCoord, newCoord.length);
+                pipeline.receive(newCoordPack);
+                ServerObject coronation = (ServerObject) byteToObj(newCoord);
+
+                // Rebind coord
+                this.setCoordinator(this.getIdServerFromInet(coronation.getSenderIP()));
+            }
+
+
+        } catch (java.io.IOException e) {
+            System.out.println("Election ran into IO Exception");
+            e.printStackTrace();
+        }
+    }
+
+    private IdServer getDaddy(InetAddress coordsInet) {
+
+        IdServer retVal = null;
+        for (IdServer member : servers) {
+            if (member.getInet().equals(coordsInet)) {
+                retVal = member;
+            }
+        }
+
+        if (retVal.equals(null)) {
+            System.out.println("getDaddy failed to find correct coordinator in server group");
+            System.exit(1);
+        }
+
+        return retVal;
+    }
+
+    public InetAddress getInet() {
+        return this.myIP;
+    }
+
+    /**
+     * Generalized Object-To-Byte-Array Algorithm
+     *
+     * @param objIn Object to convert
+     * @returns Byte Array
+     */
+    public static byte[] objToByte(Object objIn) throws java.io.IOException {
+        ByteArrayOutputStream bAOS = new ByteArrayOutputStream();
+        ObjectOutputStream oOS = new ObjectOutputStream(bAOS);
+        oOS.writeObject(objIn);
+        oOS.flush();
+        oOS.close();
+        bAOS.close();
+        byte[] convertedObj = bAOS.toByteArray();
+        return convertedObj;
+    }
+
+    /**
+     * Generalized Byte-Array-To-Object Algorithm
+     *
+     * @param arrayIn Array to convert
+     * @returns Object
+     */
+    public static Object byteToObj(byte[] arrayIn) throws java.io.IOException {
+        ByteArrayInputStream bAIS = new ByteArrayInputStream(arrayIn);
+        ObjectInputStream oIS = new ObjectInputStream(bAIS);
+        Object objOut = null;
+        try {
+            objOut = oIS.readObject();
+        } catch (ClassNotFoundException e) {
+            System.out.println("Byte Array did not convert to Object correctly.");
+            e.printStackTrace();
+        }
+        return objOut;
+    }
+
+    /**
+     * Takes a snapshot of this object and saves it to the disk in the id.ser file.
+     */
+    public void saveServerToDisk() {
+        try {
+            FileOutputStream fileOut = new FileOutputStream("id.ser");
+            ObjectOutputStream out = new ObjectOutputStream(fileOut);
+            out.writeObject(this);
+            out.close();
+            if (verboseEnabled) System.out.println("Saved server state to disk.");
+        } catch (Exception e) {
+            System.out.println(e);
+        }
+    }
+
+    /**
+     * Sets a timer that will call saveServerToDisk() every 5.5 minutes.
+     */
+    public void startTimerForDiskSave() {
+        Timer timer = new Timer();
+        TimerTask task = new TimerTask() {
+            public void run() {
+                saveServerToDisk();
+            }
+        };
+        timer.scheduleAtFixedRate(task, 330000, 330000);
+    }
+
+    private void setPID(long pid) {
+        this.myPID = pid;
+    }
+
+    /**
+     * Sets whether or not debug statements will be printed out.
+     *
+     * @param verbose true: print statements, false: do not print statements
+     */
+    public void setPrintStatements(boolean verbose) {
+        this.verboseEnabled = verbose;
+    }
+
+    private void setCoordinator(IdServer coordinator) {
+        this.coord = coordinator;
+        try {
+            registry.rebind("coord", coordinator);
+            System.out.println("New coordinator has been set. " + coordinator.getPID());
+        } catch (RemoteException e) {
+            System.out.println("problem with updating coordinator in registry.");
+            throw new RuntimeException(e);
+        }
+    }
+    private void joinTheParty(){
+        ServerObject welcomeGreeting = new ServerObject(myIP, myPID, "NewGuy");
+        try {
+            byte[] bytes = objToByte(welcomeGreeting);
+            DatagramPacket envelope = new DatagramPacket(bytes, bytes.length, hiveCluster, MASTER_CASTER);
+            pipeline.send(envelope);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+    private void welcome(){
+        ServerObject welcomeGreeting = new ServerObject(myIP, myPID, "Welcome");
+        try {
+            byte[] bytes = objToByte(welcomeGreeting);
+            DatagramPacket envelope = new DatagramPacket(bytes, bytes.length, hiveCluster, MASTER_CASTER);
+            pipeline.send(envelope);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void listen(InetAddress group, MulticastSocket s, IdServer server) {
+        socket = s;
+        groupAddr = group;
+
+        new Thread(new Runnable() {
+
+
+            public void run() {
+                try {
+                    joinTheParty();
+                    byte[] buf = new byte[1000];
+                    DatagramPacket recv = new DatagramPacket(buf, buf.length);
+                    while (true) {
+                        s.receive(recv);
+                        buf = recv.getData();
+                        ServerObject msg = (ServerObject) Utility.getObject(buf);
+                        String messageContent = msg.getContent();
+                        if(messageContent.equals("NewGuy")){
+                            if (!ipList.contains(msg.getSenderIP().getHostAddress()) && !msg.getSenderIP().getHostAddress().equals(myIP.getHostAddress())) {
+
+                                addToServerList(msg.getSenderIP(), servers);
+                                welcome();
+                            }
+                        }
+                        if(messageContent.equals("Welcome")){
+                            if (!ipList.contains(msg.getSenderIP().getHostAddress()) && !msg.getSenderIP().getHostAddress().equals(myIP.getHostAddress())) {
+
+                                addToServerList(msg.getSenderIP(), servers);
+                            }
+                        }
+                        if(messageContent.equals("Election")){
+//                            electionSelection();
+                        }
+
+
+                    }
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }).start();
+    }
+
+    private Long getPID() {
+        return this.myPID;
+    }
+
+    synchronized private void addToServerList(InetAddress ip, ArrayList<IdServer> servers) {
+        Registry otherServerReg = null;
+        try {
+            RMIClientSocketFactory rmiClientSocketFactory = new SslRMIClientSocketFactory();
+            otherServerReg = LocateRegistry.getRegistry(ip.getHostAddress(), servePort, rmiClientSocketFactory);
+            IdServer friend = (IdServer) otherServerReg.lookup("IdServer");
+            servers.add(friend);
+            ipList.add(ip.getHostAddress());
+            for (IdServer server : servers) {
+                System.out.println(server.getServerInfo());
+            }
+
+        } catch (RemoteException | NotBoundException e) {
+            System.out.println(e);
+        }
+    }
+
+
+    @Override
+    public String getAllLoginNames(int lamport) throws RemoteException {
+
+        if (verboseEnabled) System.out.println("> Executing getAllLoginNames().");
+        // Case 1: Database is empty so send a response letting them know.
+        if (loginToUUIDMap.keySet().isEmpty()) return "ID-Server: The database is empty.";
+        // Case 2: Database is not empty so send the names.
+        String retVal = "---------------------- LOGIN-NAMES ----------------------\n";
+        for (String loginName : loginToUUIDMap.keySet()) {
+            retVal += " * " + loginName + "\n";
+        }
+        return retVal;
+    }
+
+
+    @Override
+    public String getAllUUIDs(int lamport) throws RemoteException {
+        if (verboseEnabled) System.out.println("> Executing getAllUUIDs().");
+        // Case 1: Database is empty so send a response letting them know.
+        if (userDatabase.isEmpty()) return "ID-Server: The database is empty.";
+
+        // Case 2: Database is not empty so send the names.
+        String retVal = "---------------------- UUIDs ----------------------\n";
+        for (User user : userDatabase.values()) {
+            retVal += " * " + user.getUUID() + "\n";
+        }
+        return retVal;
+    }
+
+    @Override
+    synchronized public String createAccount(String loginName, String realName, String password, String ip, int lamport) throws RemoteException {
+        if (verboseEnabled) System.out.println("> Executing createAccount().");
+        // Hash the login name to determine UUID
+        UUID uuid = UUID.randomUUID();
+        // Use the hash as the key for the user entry in the database table
+        boolean loginNameAvailable = !loginToUUIDMap.containsKey(loginName);
+
+        // Case 1: Login name *is not* already a key in database.
+        if (loginNameAvailable) {
+            User user = new User(loginName, realName, password, ip, uuid);
+            loginToUUIDMap.put(loginName, uuid);
+            userDatabase.put(uuid, user);
+            saveServerToDisk();
+
+            return "ID-Server: Successfully added user to database." + user;
+        }
+
+        // Case 2: Login name *is* already a key in the database.
+        else return "ID-Server: Failed to add user to database. The name '" + loginName + "' is already in use.";
+    }
+
+
+    @Override
+    public String lookupByLoginName(String loginName, int lamport) throws RemoteException {
+        if (verboseEnabled) System.out.println("> Executing lookupByLoginName().");
+        // Case 1: Database is empty.
+        if (userDatabase.isEmpty()) return "ID-Server: The database is empty.";
+
+        // Case 2: Database is not empty and an entry exists for the loginName.
+        if (loginToUUIDMap.containsKey(loginName)) {
+            UUID uuid = loginToUUIDMap.get(loginName);
+            User user = userDatabase.get(uuid);
+            if (user != null) return "ID-Server: " + user;
+        }
+
+
+        // Case 3: Database is not empty and no entry exists for the loginName.
+        return "ID-Server: No record for '" + loginName + "' found.";
+    }
+
+
+    @Override
+    public String lookupByUUID(UUID userUUID, int lamport) throws RemoteException {
+        if (verboseEnabled) System.out.println("> Executing lookupByUUID().");
+        // Case 1: Database is empty.
+        if (userDatabase.isEmpty()) return "ID-Server: The database is empty.";
+
+        // Case 2: Database is not empty and user exists
+        User user = userDatabase.get(userUUID);
+        if (user != null) return "ID-Server: " + user;
+
+            // Case 3: Database is not empty but user does not exist
+        else return "ID-Server: Unable to locate user with that UUID in the database.";
+    }
+
+
+    @Override
+    synchronized public String changeLoginName(String currentLoginName, String updatedLoginName, String password, int lamport) throws RemoteException {
+        if (verboseEnabled) System.out.println("> Executing changeLoginName().");
+        // Case: Database is empty.
+        if (userDatabase.isEmpty()) return "ID-Server: The database is empty.";
+        // Case: The desired new login name is already in use
+        if (loginToUUIDMap.containsKey(updatedLoginName))
+            return "ID-Server: Failed to update database. Name '" + updatedLoginName + "' has already been claimed.";
+        // Case: User does not exist
+        if (!loginToUUIDMap.containsKey(currentLoginName))
+            return "ID-Server: Failed to update database. User not found.";
+
+        // Case 2: Database is not empty
+        // The login name exists and corresponds to a UUID
+        UUID uuid = loginToUUIDMap.get(currentLoginName);
+        // The actual user db contains that UUID key and corresponds to a User
+        if (userDatabase.containsKey(uuid)) {
+            User user = userDatabase.get(uuid);
+            // Password is valid so change their login name
+            if (user.passTheHash().equals(password)) {
+                // Set their login name
+                user.setLoginName(updatedLoginName);
+                // Remove that login name from the login to uuid map
+                loginToUUIDMap.remove(currentLoginName);
+                // Map the updated login name to the User's UUID.
+                loginToUUIDMap.put(updatedLoginName, uuid);
+                saveServerToDisk();
+                return "ID-Server: Database successfully updated. Name changed from '" + currentLoginName + "' ---> '" + updatedLoginName + "'";
+            }
+            // Password invalid
+            else return "ID-Server: Failed to change login name. Incorrect password.";
+        }
+        return "ID-Server: Failed to change login name.";
+    }
+
+
+    @Override
+    synchronized public String deleteUsername(String loginName, String passHash, int lamport) throws RemoteException {
+        if (verboseEnabled) System.out.println("> Executing deleteUsername().");
+        // Case: Database is empty.
+        if (userDatabase.isEmpty()) return "ID-Server: The database is empty.";
+        // Case: User not found.
+        if (!loginToUUIDMap.containsKey(loginName)) return "ID-Server: User not found.";
+
+        // Case 2: Database is not empty and has key
+        UUID uuid = loginToUUIDMap.get(loginName);
+        User user = userDatabase.get(uuid);
+        System.out.println(user.passTheHash());
+        System.out.println(passHash);
+        if (user != null) {
+            // Case 2a: User provided the right password
+            if (user.passTheHash().equals(passHash)) {
+
+                loginToUUIDMap.remove(loginName);
+                userDatabase.remove(uuid);
+                saveServerToDisk();
+                return "ID-Server: Successfully deleted user from database.";
+            }
+            // Case 2b: User provided the wrong password
+            return "ID-Server: Failed to delete user from the database. Invalid password.";
+        }
+        // Case 3: Black magic.
+        return "ID-Server: Failed to delete user from the database.";
+    }
+
+
+    @Override
+    public String getAllUsers(int lamport) throws RemoteException {
+        if (verboseEnabled) System.out.println("> Executing getAllUsers().");
+        // Case 1: Database is empty.
+        if (userDatabase.isEmpty()) return "ID-Server: The database is empty.";
+
+        // Case 2: Database is not empty.
+        String retVal = "ID-Server: \n ---------------------------------------- User List -----------------------------------------";
+        for (User user : userDatabase.values()) {
+            retVal += user.toString();
+            retVal += " --------------------------------------------------------------------------------------------\n";
+        }
+        String testVal = "";
+        testVal = retVal.replaceAll("\\]|\\[|\\,", "");
+        return testVal;
+    }
+
+    /**
+     * Returns an IdImpl object stored on the disk in the id.ser file or
+     * creates a new IdImpl and returns that object.
+     *
+     * @param verbosity
+     * @return IdImpl server
+     */
+    public static IdServer readServerFromDisk(boolean verbosity) {
+
+        // Case 1: A file with an identical name as our save file for the server object exists.
+        if (new File("id.ser").exists()) {
+            try {
+                // Attempt to retrieve the file containing the previous server object.
+                FileInputStream fileIn = new FileInputStream("id.ser");
+                ObjectInputStream in = new ObjectInputStream(fileIn);
+
+                // Attempt to read in the object from the file and return it.
+                Object obj = in.readObject();
+                in.close();
+                System.out.println("Restoring server from previous state.");
+                IdServer server = (IdServer) obj;
+
+                // Reconfigure the server disk save timer and export server to RMI for client use.
+                server.setPrintStatements(verbosity);
+                server.startTimerForDiskSave();
+//                server.exportToRMI();
+                return server;
+            } catch (IOException e) {
+                System.err.println(e);
+            } catch (ClassNotFoundException e) {
+                System.err.println(e);
+            }
+        }
+        // Case: Server save file cannot be found.
+        return new IdServer();
+    }
+
+    @Override
+    public String toString() {
+        try {
+            return this.myPID + " " + InetAddress.getLocalHost().getHostAddress();
+        } catch (UnknownHostException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Setups the RMI registry on the specified port and lists the passed
+     * Id server in that registry.
+     *
+     * @param server
+     * @param port
+     */
+    public static void startRegistry(Id server, int port) {
+        try {
+            // Create a registry for the port 1099 and bind our server to the reference "IdServer"
+            Registry registry = LocateRegistry.createRegistry(port);
+            registry.bind("IdServer", (IdServerMember) server);
+            System.out.println("Server has started on port " + port + ".");
+
+        } catch (RemoteException e) {
+            e.printStackTrace();
+            System.out.println("remote exception thrown");
+        } catch (AlreadyBoundException e) {
+
+            System.out.println("already bound exception");
+        }
+    }
+
+    /**
+     * Prints the CLI usage of the IdServer program.
+     */
+    public static void printUsage() {
+        System.err.println("java IdServer [--numport <port#>] [--verbose]");
+    }
+
+
+    //  Shelving this for now because I've changed the ServerObject to need deets from server
+//    public void broadcast(){
+//
+//        try {
+//            ServerObject obj = new ServerObject();
+//            obj.setSenderIP(InetAddress.getByName(myIP));
+//            byte bytes[] = Utility.getBytes(obj);
+//            DatagramPacket msg = new DatagramPacket(bytes, bytes.length, groupAddr, MASTER_CASTER);
+//            socket.send(msg);
+//        } catch (IOException e) {
+//            throw new RuntimeException(e);
+//        }
+//
+//
+//    }
+
+
+    public String getServerInfo() {
+        return "IP: " + this.myIP + "\n PID: " + this.myPID;
+    }
+}
+    /*
+    SHIT WE NEED: SERVER
+        1) Handle for being contacted by a client when the server is not the coord which will send the correct IP to the client
+            To do this, servers should have a coordinator boolean, as well as be started with the list of all server IPs
+
+        2) Coordinator heartbeat sensor thread
+
+        3) Election algorithm which compares everybody's dick size (PID)
+
+        4) Instructions to pass orders to followers to write to their databases as well after coord makes changes
+
+        5) Lamport timestamps: instance variable, correcting a lagging client, and implementing them to all functions
+     */
+
+
+

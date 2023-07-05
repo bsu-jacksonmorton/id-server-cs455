@@ -1,0 +1,17 @@
+// Creating the network for the containers
+docker network create -d bridge idnetwork --subnet 172.20.0.0/16
+
+// Building the container images
+./buildimages
+
+// Command to run the client container
+docker run -it --network idnetwork --ip 172.20.0.15 --name Client client bash
+
+// Command to run the server container
+docker run --network idnetwork --ip 172.20.0.11 --name ServerOne server
+docker run --network idnetwork --ip 172.20.0.12 --name ServerTwo server
+docker run --network idnetwork --ip 172.20.0.13 --name ServerThree server
+docker run --network idnetwork --ip 172.20.0.14 --name ServerFour server
+
+
+

@@ -1,0 +1,14 @@
+FROM ubuntu:18.04
+RUN apt -y update
+RUN apt -y upgrade
+RUN apt-get install -y git
+RUN apt-get install net-tools
+RUN apt install -y default-jdk
+RUN apt install -y default-jre
+RUN apt install -y maven
+RUN apt install -y make
+COPY . .
+RUN mvn clean
+RUN mvn compile
+RUN mvn package
+RUN (chmod +x update; chmod +x create; chmod +x getUsers; chmod +x lookup; chmod +x delete; chmod +x getUUIDS; chmod +x getAll; chmod +x createAnotherOne; chmod +x createAnotherTwo)

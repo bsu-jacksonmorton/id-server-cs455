@@ -1,0 +1,3 @@
+docker kill $(docker ps -q)
+docker rm -f -v $(docker ps -q -a)
+clear

@@ -1,0 +1,15 @@
+FROM ubuntu:18.04
+RUN apt -y update
+RUN apt -y upgrade
+RUN apt-get install -y git
+RUN apt-get install net-tools
+RUN apt install -y default-jdk
+RUN apt install -y default-jre
+RUN apt install -y maven
+COPY . .
+RUN mvn clean
+RUN mvn compile
+RUN mvn package
+CMD (rm db-ledger; cp target/p3-1.0-SNAPSHOT-jar-with-dependencies.jar .; java -cp p3-1.0-SNAPSHOT-jar-with-dependencies.jar server.IdServer)
+
+#  java -cp target/p3-1.0-SNAPSHOT-jar-with-dependencies.jar client.IdClient --server 172.20.0.11 --numport 1099 --lookup jim

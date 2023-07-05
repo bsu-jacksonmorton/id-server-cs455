@@ -1,0 +1,39 @@
+Team: 010
+
+Members:James Crowell, Jackson Morton
+
+Grade: 195/200
+
+Late penalty:
+
+Submission quality:
+	-project layout: ok
+	-build: ok
+	-pregenerated server/client keystores and passwords (statically in the code is ok): ok
+
+Features:
+	-Election algorithm implementation (50 points): ok
+	-Consistency implementation (30 points): ok
+	-Fault tolerance (40 points):
+		-Backup server failure and recovery: ok
+		-Coordinator failure and recovery: ok
+
+	-Uses SSL (10 points):  ok
+	-Checkpointing (10 points):  ok
+
+Video (20 points):
+	-Demonstrate servers on multiple:  ok
+	-Demonstrate servers on multiple docker instances or AWS instances (required): ok
+	-Demonstrate on all three platforms (extra credit: +10)
+
+White Paper (20 points):  ok
+
+Code style and documentation (20 points): 
+	-README.md file: ok
+	-testing: ok
+	-Scripts for running project on onyx lab and on localhost (10 points): ok
+	-coding style: ok
+	-Javadocs:  Not pregenerated? -5
+
+Comments: This wasn't bad. I would be very curious to Jim's multicast version if he gets time to do
+it in summer.

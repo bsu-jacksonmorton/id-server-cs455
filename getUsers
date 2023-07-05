@@ -1,0 +1,1 @@
+java -cp target/p3-1.0-SNAPSHOT-jar-with-dependencies.jar client.IdClient --server 172.20.0.11 --numport 1099 --get users

@@ -1,0 +1,6 @@
+konsole --noclose -e docker run --network idnetwork --ip 172.20.0.11 --name ServerOne server &
+konsole --noclose -e docker run --network idnetwork --ip 172.20.0.12 --name ServerTwo server &
+konsole --noclose -e docker run --network idnetwork --ip 172.20.0.13 --name ServerThree server &
+konsole --noclose -e docker run --network idnetwork --ip 172.20.0.14 --name ServerFour server &
+konsole --noclose -e docker run -it --network idnetwork --ip 172.20.0.15 --name Client client bash &
+konsole &
