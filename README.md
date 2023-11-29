@@ -2,34 +2,6 @@ CS455 (Distributed Systems); Project 3 (Identity Server Phase 2 - Reliability Re
 
 [Video Demo](https://youtu.be/70LEJlMGrQM)
 
-## PROJECT STRUCTURE 
-SRC/MAIN/JAVA: <br>
-CLIENT/<br>
-IdClient.Java . . . . Source file: Client <br> <br>
-
-SERVER/<br>
-IdServer.java . . . . Source file: Driver class of Server <br>
-IdImpl.java . . . . Source file: Implementation of Server <br>
-User.java . . . . Source file: Implementation of User object (to streamline manipulation of users in database) <br> <br>
-IdServerMember.java . . . . Source file: Implementation of list of servers to maintain the cluster
-ServerObject.java . . . . Source file: Definition of object that servers create when utilizing multicast to communicate
-Ballot.java . . . . Source file: Ballot object for servers to participate in elections
-Candidate.java . . . . Source file: Object contained within Ballot, which contains the data of the server participating in the election
-Database*.java . . . . Source file: Objects created to communicate changes to the database invoked on the coordinator by the client, to sync followers 
-
-
-SHARED/<br>
-Id.java . . . . Source file: Interface for Server object/Client's RMI object access <br><br>
-Utility.java . . . . Source file: Basic Object <---> Byte Array conversion methods, to facilitate multicast
-
-SRC/MAIN/RESOURCES/ <br>
-Client_Truststore . . . . Resource file: Enables Client SSL communications with Server <br>
-Server_Keystore . . . . Resource file: Enables Server SSL communications with Client <br>
-Server.cer . . . . Resource file: Client authentication certification; facilitates Client/Server communications 
-commons-cli-1.5.0.jar . . . . Resource file: External library for command line parsing
-
-
-
 ## BUILDING/RUNNING
 
 From the root project directory run the following command to build the docker network, docker images for server and client, and a full maven clean, compile, and package for local versions of jar.
